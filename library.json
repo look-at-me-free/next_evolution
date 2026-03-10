@@ -70,6 +70,24 @@
           "path": "chapter_2",
           "type": "chapter",
           "subtitle": "Chapter 2"
+        },
+        {
+          "slug": "chapter_3",
+          "path": "chapter_3",
+          "type": "chapter",
+          "subtitle": "Chapter 3"
+        },
+        {
+          "slug": "chapter_4",
+          "path": "chapter_4",
+          "type": "chapter",
+          "subtitle": "Chapter 4"
+        },
+        {
+          "slug": "chapter_5",
+          "path": "chapter_5",
+          "type": "chapter",
+          "subtitle": "Chapter 5"
         }
       ]
     },
@@ -84,6 +102,18 @@
           "path": "book_1/chapter_1",
           "type": "chapter",
           "subtitle": "Chapter 1"
+        },
+        {
+          "slug": "chapter_2",
+          "path": "book_1/chapter_2",
+          "type": "chapter",
+          "subtitle": "Chapter 2"
+        },
+        {
+          "slug": "chapter_3",
+          "path": "book_1/chapter_3",
+          "type": "chapter",
+          "subtitle": "Chapter 3"
         }
       ]
     },
