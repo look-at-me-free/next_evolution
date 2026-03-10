@@ -4,7 +4,7 @@
     {
       "id": 101,
       "slug": "barato",
-      "display": "Naruto",
+      "display": "Barato",
       "top_pill": true,
       "entries": [
         {
@@ -30,7 +30,7 @@
     {
       "id": 201,
       "slug": "jaja",
-      "display": "Jojo's Bizarre Adventure",
+      "display": "Jaja",
       "top_pill": true,
       "entries": [
         {
@@ -56,7 +56,7 @@
     {
       "id": 301,
       "slug": "golden",
-      "display": "Golden Boy",
+      "display": "Golden",
       "top_pill": true,
       "entries": [
         {
@@ -94,7 +94,7 @@
     {
       "id": 401,
       "slug": "bark",
-      "display": "Berserk",
+      "display": "Bark",
       "top_pill": true,
       "entries": [
         {
@@ -140,6 +140,20 @@
           "path": "book_1/chapter_3",
           "type": "chapter",
           "subtitle": "Chapter 3"
+        }
+      ]
+    },
+    {
+      "id": 601,
+      "slug": "blade_of_the_immortal",
+      "display": "Blade Of The Immortal",
+      "top_pill": true,
+      "entries": [
+        {
+          "slug": "chapter_1",
+          "path": "book_1/chapter_1",
+          "type": "chapter",
+          "subtitle": "Chapter 1"
         }
       ]
     }
