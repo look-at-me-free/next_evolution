@@ -221,7 +221,7 @@
       <div class="row" style="justify-content:space-between; align-items:flex-end;">
         <div>
           <h2>Results</h2>
-          <p class="tiny">Cards below use the first image URL when it works. If an entry only has <code>item.json</code> but not <code>First image</code>, it will still be marked accordingly.</p>
+          <p class="tiny">Cards below use the first image URL when it works. If an entry only has <code>item.json</code> but not <code>001.webp</code>, it will still be marked accordingly.</p>
         </div>
       </div>
       <div id="results" class="results"></div>
@@ -273,65 +273,7 @@
       }
     }
 
-    // Try common naming styles for first page
-    async function findFirstImage(baseEntryUrl) {
-      const candidates = ["001.webp","01.webp","1.webp"];
-      for (const name of candidates) {
-        const url = joinUrl(baseEntryUrl, name);
-        const res = await requestWithFallback(url);
-        if (res.ok) return res;
-      }
-      return { ok:false, status:404, url:joinUrl(baseEntryUrl,"001.webp") };
-    }
-
-    // Determine last page either via item.json or probing
-    async function findLastImage(baseEntryUrl, itemJsonResult) {
-      try {
-        if (itemJsonResult.ok) {
-          const res = await fetch(itemJsonResult.url);
-          const data = await res.json();
-
-          // common structures
-          let count = null;
-          if (Array.isArray(data.pages)) count = data.pages.length;
-          if (Array.isArray(data.images)) count = data.images.length;
-          if (typeof data.count === 'number') count = data.count;
-
-          if (count && count > 0) {
-            const candidates = [
-              String(count).padStart(3,'0') + '.webp',
-              String(count).padStart(2,'0') + '.webp',
-              count + '.webp'
-            ];
-
-            for (const name of candidates) {
-              const url = joinUrl(baseEntryUrl, name);
-              const test = await requestWithFallback(url);
-              if (test.ok) return test;
-            }
-          }
-        }
-      } catch(e) {}
-
-      // fallback brute probe backwards from 500
-      for (let i = 500; i >= 1; i--) {
-        const candidates = [
-          String(i).padStart(3,'0') + '.webp',
-          String(i).padStart(2,'0') + '.webp',
-          i + '.webp'
-        ];
-
-        for (const name of candidates) {
-          const url = joinUrl(baseEntryUrl, name);
-          const res = await requestWithFallback(url);
-          if (res.ok) return res;
-        }
-      }
-
-      return { ok:false, status:404, url:joinUrl(baseEntryUrl,"unknown.webp") };
-    }
-
-    async function readJsonFile(file) {(file) {
+    async function readJsonFile(file) {
       const text = await file.text();
       return JSON.parse(text);
     }
@@ -368,7 +310,7 @@
         <div class="stat"><div class="muted tiny">Any success</div><div class="num ok">${okCount}</div></div>
         <div class="stat"><div class="muted tiny">Fully broken</div><div class="num bad">${brokenCount}</div></div>
         <div class="stat"><div class="muted tiny">item.json works</div><div class="num warn">${itemOkCount}</div></div>
-        <div class="stat"><div class="muted tiny">First image works</div><div class="num ok">${imageOkCount}</div></div>
+        <div class="stat"><div class="muted tiny">001.webp works</div><div class="num ok">${imageOkCount}</div></div>
       `;
     }
 
@@ -480,9 +422,10 @@
             const itemUrl = joinUrl(baseEntryUrl, 'item.json');
             const imageUrl = joinUrl(baseEntryUrl, '001.webp');
 
-            const item = await requestWithFallback(itemUrl);
-            const firstImage = await findFirstImage(baseEntryUrl);
-            const lastImage = await findLastImage(baseEntryUrl, item);
+            const [item, image] = await Promise.all([
+              requestWithFallback(itemUrl),
+              requestWithFallback(imageUrl)
+            ]);
 
             results.push({
               work_id: work.id,
@@ -492,8 +435,7 @@
               entry_subtitle: entry.subtitle || '',
               entry_path: entry.path,
               item,
-              image:firstImage,
-              lastImage,
+              image,
               anyOk: !!(item.ok || image.ok)
             });
 
