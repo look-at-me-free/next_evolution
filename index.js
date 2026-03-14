@@ -5,79 +5,18 @@
   const R2_BASE_URL = "https://pub-cd01009a7c6c464aa0b093e33aa5ae51.r2.dev";
   const WORKS_DIR = `${R2_BASE_URL}/works`;
   const ITEM_JSON_NAME = "item.json";
-  const BOTTOM_AD_COUNT = 6;
-  const RAIL_REFRESH_MS = 75000;
-  const BANNER_REFRESH_MS = 95000;
+
+  const SEARCH_RESULTS_LIMIT = 12;
   const READ_PROGRESS_PREFETCH = 0.7;
   const BOTTOM_GLOW_PROGRESS = 0.95;
-  const SEARCH_RESULTS_LIMIT = 12;
-  const IS_MOBILE_READER = document.body?.dataset?.readerMode === "mobile";
+
+  const RAIL_REFRESH_MS = 75000;
+  const BANNER_REFRESH_MS = 95000;
+
   const DEVICE_LOCK_KEY = "reader_device_lock";
   const DESKTOP_MODE_MIN_WIDTH = 1100;
 
-  function getDesktopLock() {
-    try {
-      return localStorage.getItem(DEVICE_LOCK_KEY) === "desktop";
-    } catch {
-      return false;
-    }
-  }
-
-  function setDesktopLock() {
-    try {
-      localStorage.setItem(DEVICE_LOCK_KEY, "desktop");
-    } catch {}
-  }
-
-  function clearDesktopLock() {
-    try {
-      localStorage.removeItem(DEVICE_LOCK_KEY);
-    } catch {}
-  }
-
-  function getBasePath() {
-    return window.location.pathname.replace(/\/[^\/]*$/, "/");
-  }
-
-  function buildReaderUrl(fileName) {
-    return `${window.location.origin}${getBasePath()}${fileName}${window.location.search}${window.location.hash}`;
-  }
-
-  function redirectToDesktop() {
-    if (/\/index\.html?$/i.test(window.location.pathname)) return;
-    window.location.replace(buildReaderUrl("index.html"));
-  }
-
-  function maybePromoteToDesktop() {
-    if (window.innerWidth >= DESKTOP_MODE_MIN_WIDTH) {
-      setDesktopLock();
-
-      if (IS_MOBILE_READER) {
-        redirectToDesktop();
-      }
-
-      return true;
-    }
-
-    return false;
-  }
-
-  function enforceReaderModeLock() {
-    if (IS_MOBILE_READER) {
-      if (getDesktopLock()) {
-        redirectToDesktop();
-        return true;
-      }
-
-      return maybePromoteToDesktop();
-    }
-
-    if (window.innerWidth >= DESKTOP_MODE_MIN_WIDTH) {
-      setDesktopLock();
-    }
-
-    return false;
-  }
+  const IS_MOBILE_READER = document.body?.dataset?.readerMode === "mobile";
 
   const ZONES = {
     topBanner: 5865232,
@@ -99,19 +38,20 @@
   let ARCHIVE_WORKS = [];
   let CURRENT_WORK = null;
   let CURRENT_ENTRY = null;
-  let CURRENT_ITEM = null;
+  let CURRENT_MANIFEST = null;
 
-  let topFlyoutsWired = false;
-  let stickyControlsWired = false;
   let searchWired = false;
+  let desktopFlyoutsWired = false;
+  let mobileWorksWired = false;
+  let stickyControlsWired = false;
+  let progressWatchWired = false;
+  let dialWired = false;
+
   let railRefreshTimer = null;
   let bannerRefreshTimer = null;
-  let nextPrefetch = null;
-  let progressWatchWired = false;
+  let nextPrefetchPromise = null;
   let bottomGlowTriggered = false;
-  let mobileWorksWired = false;
   let mobileOpenWorkSlug = "";
-  let dialWired = false;
 
   function $(sel, root = document) {
     return root.querySelector(sel);
@@ -142,105 +82,92 @@
       .replace(/\b\w/g, ch => ch.toUpperCase());
   }
 
-  function scrollToReaderTop() {
-    const target =
-      document.getElementById("readerTopAnchor") ||
-      document.getElementById("reader") ||
-      document.getElementById("searchBarAnchor");
+  function joinUrl(...parts) {
+    return parts
+      .map((part, index) => {
+        const s = String(part ?? "");
+        if (!s) return "";
+        if (index === 0) return s.replace(/\/+$/, "");
+        return s.replace(/^\/+|\/+$/g, "");
+      })
+      .filter(Boolean)
+      .join("/");
+  }
 
-    if (target) {
-      target.scrollIntoView({ behavior: "smooth", block: "start" });
+  function normalizeBaseUrl(url) {
+    return String(url || "").replace(/\/+$/, "");
+  }
+
+  function getDesktopLock() {
+    try {
+      return localStorage.getItem(DEVICE_LOCK_KEY) === "desktop";
+    } catch {
+      return false;
     }
   }
 
-  function scrollToSearchBar() {
-    const target =
-      document.getElementById("searchBarAnchor") ||
-      document.querySelector(".hero");
+  function setDesktopLock() {
+    try {
+      localStorage.setItem(DEVICE_LOCK_KEY, "desktop");
+    } catch {}
+  }
 
-    if (target) {
-      target.scrollIntoView({ behavior: "smooth", block: "start" });
+  function getBasePath() {
+    return window.location.pathname.replace(/\/[^\/]*$/, "/");
+  }
+
+  function buildReaderUrl(fileName) {
+    return `${window.location.origin}${getBasePath()}${fileName}${window.location.search}${window.location.hash}`;
+  }
+
+  function redirectToDesktop() {
+    if (/\/index\.html?$/i.test(window.location.pathname)) return;
+    window.location.replace(buildReaderUrl("index.html"));
+  }
+
+  function maybePromoteToDesktop() {
+    if (window.innerWidth >= DESKTOP_MODE_MIN_WIDTH) {
+      setDesktopLock();
+      if (IS_MOBILE_READER) redirectToDesktop();
+      return true;
     }
+    return false;
   }
 
-  function setMobileOpenWork(workSlug) {
-    mobileOpenWorkSlug = normalizeKey(workSlug || "");
+  function enforceReaderModeLock() {
+    if (IS_MOBILE_READER) {
+      if (getDesktopLock()) {
+        redirectToDesktop();
+        return true;
+      }
+      return maybePromoteToDesktop();
+    }
 
-    const items = $$(".mobile-work-item");
-    items.forEach(item => {
-      const isOpen = normalizeKey(item.dataset.workSlug) === mobileOpenWorkSlug;
-      item.classList.toggle("open", isOpen);
-      item.classList.toggle("active", isOpen);
-    });
+    if (window.innerWidth >= DESKTOP_MODE_MIN_WIDTH) {
+      setDesktopLock();
+    }
+
+    return false;
   }
 
-  function syncDialThumb() {
-    if (!IS_MOBILE_READER) return;
-
-    const scrollEl = document.getElementById("worksNav");
-    const track = document.getElementById("dialTrack");
-    const thumb = document.getElementById("dialThumb");
-    if (!scrollEl || !track || !thumb) return;
-
-    const maxScroll = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight);
-    const trackH = track.clientHeight;
-    const thumbH = thumb.offsetHeight;
-    const maxTop = Math.max(0, trackH - thumbH);
-
-    const ratio = maxScroll > 0 ? scrollEl.scrollTop / maxScroll : 0;
-    thumb.style.top = `${maxTop * ratio}px`;
-  }
-
-  function wireMobileDial() {
-    if (!IS_MOBILE_READER || dialWired) return;
-    dialWired = true;
-
-    const scrollEl = document.getElementById("worksNav");
-    const track = document.getElementById("dialTrack");
-    const thumb = document.getElementById("dialThumb");
-    if (!scrollEl || !track || !thumb) return;
-
-    let dragging = false;
-
-    const moveThumb = (clientY) => {
-      const rect = track.getBoundingClientRect();
-      const thumbH = thumb.offsetHeight;
-      const maxTop = Math.max(0, rect.height - thumbH);
-
-      let top = clientY - rect.top - thumbH / 2;
-      top = Math.max(0, Math.min(maxTop, top));
-
-      const ratio = maxTop > 0 ? top / maxTop : 0;
-      const maxScroll = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight);
-
-      scrollEl.scrollTop = maxScroll * ratio;
-      thumb.style.top = `${top}px`;
+  function getQueryState() {
+    const url = new URL(window.location.href);
+    return {
+      dir: url.searchParams.get("dir") || "",
+      file: url.searchParams.get("file") || ""
     };
+  }
 
-    track.addEventListener("pointerdown", (e) => {
-      dragging = true;
-      track.setPointerCapture?.(e.pointerId);
-      moveThumb(e.clientY);
-    });
+  function setQueryState(dir, file, replace = false) {
+    const url = new URL(window.location.href);
+    url.searchParams.set("dir", dir);
+    url.searchParams.set("file", file);
 
-    track.addEventListener("pointermove", (e) => {
-      if (!dragging) return;
-      moveThumb(e.clientY);
-    });
-
-    track.addEventListener("pointerup", (e) => {
-      dragging = false;
-      track.releasePointerCapture?.(e.pointerId);
-    });
-
-    track.addEventListener("pointercancel", () => {
-      dragging = false;
-    });
-
-    scrollEl.addEventListener("scroll", syncDialThumb, { passive: true });
-    window.addEventListener("resize", syncDialThumb);
-
-    syncDialThumb();
+    if (replace) {
+      history.replaceState({ dir, file }, "", url);
+    } else {
+      history.pushState({ dir, file }, "", url);
+    }
   }
 
   function serveAds() {
@@ -264,7 +191,6 @@
   }
 
   function fillSlot(el, zoneId, sub = 1, sub2 = 1, sub3 = 1) {
-    if (!el) return;
     refillSlot(el, zoneId, sub, sub2, sub3);
     serveAds();
   }
@@ -277,36 +203,28 @@
     return res.json();
   }
 
+  async function requestWithFallback(url) {
+    try {
+      let res = await fetch(url, { method: "HEAD", cache: "no-store" });
+      if (res.status === 403 || res.status === 405) {
+        res = await fetch(url, { method: "GET", cache: "no-store" });
+      }
+      return { ok: res.ok, status: res.status, url };
+    } catch (error) {
+      return { ok: false, status: "ERROR", url, error: error?.message || String(error) };
+    }
+  }
+
   async function loadLibrary() {
     const data = await fetchJson(LIBRARY_FILE);
-    ARCHIVE_WORKS = Array.isArray(data.works) ? data.works : [];
-  }
-
-  function getQueryState() {
-    const url = new URL(window.location.href);
-    return {
-      dir: url.searchParams.get("dir") || "",
-      file: url.searchParams.get("file") || ""
-    };
-  }
-
-  function setQueryState(dir, file, replace = false) {
-    const url = new URL(window.location.href);
-    url.searchParams.set("dir", dir);
-    url.searchParams.set("file", file);
-
-    if (replace) {
-      history.replaceState({ dir, file }, "", url);
-    } else {
-      history.pushState({ dir, file }, "", url);
-    }
+    ARCHIVE_WORKS = Array.isArray(data?.works) ? data.works : [];
   }
 
   function getFirstEntry() {
     for (const work of ARCHIVE_WORKS) {
-      const first = Array.isArray(work.entries) ? work.entries[0] : null;
-      if (work?.slug && first?.slug) {
-        return { work, entry: first };
+      const entries = Array.isArray(work?.entries) ? work.entries : [];
+      if (work?.slug && entries.length) {
+        return { work, entry: entries[0] };
       }
     }
     return { work: null, entry: null };
@@ -329,7 +247,7 @@
   }
 
   function buildItemJsonPath(workSlug, entryPathOrSlug) {
-    const safeParts = String(entryPathOrSlug)
+    const safeParts = String(entryPathOrSlug || "")
       .split("/")
       .filter(Boolean)
       .map(part => encodeURIComponent(part));
@@ -337,37 +255,115 @@
     return `${WORKS_DIR}/${encodeURIComponent(workSlug)}/${safeParts.join("/")}/${ITEM_JSON_NAME}`;
   }
 
-  function normalizeBaseUrl(url) {
-    return String(url || "").replace(/\/+$/, "");
+  function buildEntryBaseUrl(workSlug, entryPathOrSlug) {
+    const safeParts = String(entryPathOrSlug || "")
+      .split("/")
+      .filter(Boolean)
+      .map(part => encodeURIComponent(part));
+    return `${WORKS_DIR}/${encodeURIComponent(workSlug)}/${safeParts.join("/")}`;
   }
 
-  function buildImageList(manifest) {
-    if (Array.isArray(manifest.images) && manifest.images.length) {
-      return manifest.images;
+  function getManifestCount(manifest) {
+    if (Number.isFinite(manifest?.pages)) return manifest.pages;
+    if (Number.isFinite(manifest?.count)) return manifest.count;
+    if (Number.isFinite(manifest?.total_pages)) return manifest.total_pages;
+    if (Number.isFinite(manifest?.page_count)) return manifest.page_count;
+    return 0;
+  }
+
+  function extractListedImages(manifest) {
+    if (Array.isArray(manifest?.images) && manifest.images.length) {
+      return manifest.images
+        .map(item => {
+          if (typeof item === "string") return item;
+          if (item && typeof item === "object") {
+            return item.file || item.filename || item.name || item.src || "";
+          }
+          return "";
+        })
+        .filter(Boolean);
     }
 
-    if (Number.isFinite(manifest.pages) && manifest.pages > 0) {
-      const ext = manifest.extension || "jpg";
-      const padding = Number.isFinite(manifest.padding) ? manifest.padding : 2;
-
-      return Array.from({ length: manifest.pages }, (_, i) => {
-        const n = String(i + 1).padStart(padding, "0");
-        return `${n}.${ext}`;
-      });
+    if (Array.isArray(manifest?.pages) && manifest.pages.length) {
+      return manifest.pages
+        .map(item => {
+          if (typeof item === "string") return item;
+          if (item && typeof item === "object") {
+            return item.file || item.filename || item.name || item.src || "";
+          }
+          return "";
+        })
+        .filter(Boolean);
     }
 
     return [];
   }
 
+  async function resolveGeneratedImageNames(baseUrl, manifest) {
+    const count = getManifestCount(manifest);
+    if (!(count > 0)) return [];
+
+    const extCandidates = [
+      manifest?.extension,
+      manifest?.ext,
+      "webp",
+      "jpg",
+      "jpeg",
+      "png"
+    ].filter((v, i, arr) => typeof v === "string" && v && arr.indexOf(v) === i);
+
+    const paddingCandidates = [
+      Number.isFinite(manifest?.padding) ? manifest.padding : null,
+      Number.isFinite(manifest?.zero_padding) ? manifest.zero_padding : null,
+      3,
+      2,
+      1
+    ].filter((v, i, arr) => Number.isFinite(v) && arr.indexOf(v) === i);
+
+    const names = [];
+
+    for (let i = 1; i <= count; i++) {
+      let found = "";
+
+      for (const ext of extCandidates) {
+        for (const padding of paddingCandidates) {
+          const candidate = `${String(i).padStart(padding, "0")}.${ext}`;
+          const probe = await requestWithFallback(joinUrl(baseUrl, candidate));
+          if (probe.ok) {
+            found = candidate;
+            break;
+          }
+        }
+        if (found) break;
+      }
+
+      if (!found) {
+        const ext = extCandidates[0] || "webp";
+        const padding = paddingCandidates[0] || 3;
+        found = `${String(i).padStart(padding, "0")}.${ext}`;
+      }
+
+      names.push(found);
+    }
+
+    return names;
+  }
+
+  async function resolveManifestImages(baseUrl, manifest) {
+    const listed = extractListedImages(manifest);
+    if (listed.length) return listed;
+    return resolveGeneratedImageNames(baseUrl, manifest);
+  }
+
   function getSubids(manifest) {
-    const fallbackWork = Number(manifest.parent_work_id) || 1;
+    const fallbackWork = Number(manifest?.parent_work_id) || Number(CURRENT_WORK?.id) || 1;
 
     return {
-      work: manifest.subids?.work ?? fallbackWork,
-      top: manifest.subids?.top ?? fallbackWork + 10,
-      left: manifest.subids?.left ?? fallbackWork + 20,
-      right: manifest.subids?.right ?? fallbackWork + 30,
-      between: manifest.subids?.between ?? fallbackWork + 40
+      work: manifest?.subids?.work ?? fallbackWork,
+      top: manifest?.subids?.top ?? (fallbackWork + 10),
+      left: manifest?.subids?.left ?? (fallbackWork + 20),
+      right: manifest?.subids?.right ?? (fallbackWork + 30),
+      between: manifest?.subids?.between ?? (fallbackWork + 40)
     };
   }
 
@@ -387,7 +383,6 @@
 
   function betweenAd(manifest, groupNumber, slotCount) {
     const subids = getSubids(manifest);
-
     const wrap = document.createElement("div");
     wrap.className = "between-grid";
 
@@ -405,7 +400,6 @@
 
   function endAds(manifest, count) {
     const subids = getSubids(manifest);
-
     const wrap = document.createElement("div");
     wrap.className = "end-grid";
 
@@ -426,6 +420,16 @@
 
     RIGHT_RAIL_IDS.forEach((id, index) => {
       fillSlot(document.getElementById(id), ZONES.rightRail, subids.right, subids.work, index + 1);
+    });
+  }
+
+  function clearDesktopAdShells() {
+    const topBanner = document.getElementById("topBannerSlot");
+    if (topBanner) topBanner.innerHTML = "";
+
+    [...LEFT_RAIL_IDS, ...RIGHT_RAIL_IDS].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = "";
     });
   }
 
@@ -456,7 +460,7 @@
 
     if (!items.length) {
       results.innerHTML = "";
-      stat.textContent = IS_MOBILE_READER ? "Type to search" : "No matches yet";
+      stat.textContent = IS_MOBILE_READER ? "Type to search" : "No matches";
       return;
     }
 
@@ -479,7 +483,7 @@
 
     const all = flattenEntries();
 
-    const refresh = () => {
+    function refresh() {
       const query = normalizeKey(input.value);
 
       if (!query) {
@@ -504,7 +508,7 @@
 
       renderSearchResults(matched);
       stat.textContent = matched.length ? `${matched.length} result${matched.length === 1 ? "" : "s"}` : "No matches";
-    };
+    }
 
     input.addEventListener("input", refresh);
 
@@ -522,9 +526,7 @@
 
       await switchEntry(btn.dataset.dir, btn.dataset.file, false);
 
-      if (IS_MOBILE_READER) {
-        scrollToReaderTop();
-      }
+      if (IS_MOBILE_READER) scrollToReaderTop();
     });
 
     refresh();
@@ -555,13 +557,15 @@
     const nav = document.getElementById("worksNav");
     if (!nav) return;
 
+    const works = ARCHIVE_WORKS.filter(w => w.top_pill !== false);
+
     if (IS_MOBILE_READER) {
       let html = "";
 
-      for (const work of ARCHIVE_WORKS.filter(w => w.top_pill !== false)) {
+      for (const work of works) {
+        const entries = Array.isArray(work.entries) ? work.entries : [];
         const isActiveWork = normalizeKey(work.slug) === normalizeKey(CURRENT_WORK?.slug);
         const isOpen = normalizeKey(work.slug) === normalizeKey(mobileOpenWorkSlug || CURRENT_WORK?.slug);
-        const entries = Array.isArray(work.entries) ? work.entries : [];
 
         html += `
           <section class="mobile-work-item${isActiveWork ? " active" : ""}${isOpen ? " open" : ""}" data-work-slug="${escapeHtml(work.slug)}">
@@ -573,11 +577,7 @@
         `;
 
         for (const entry of entries) {
-          const active =
-            isActiveWork && normalizeKey(entry.slug) === normalizeKey(CURRENT_ENTRY?.slug)
-              ? " current"
-              : "";
-
+          const active = isActiveWork && normalizeKey(entry.slug) === normalizeKey(CURRENT_ENTRY?.slug) ? " current" : "";
           html += `
             <button
               class="mobile-chapter-link${active}"
@@ -603,9 +603,9 @@
 
     let html = "";
 
-    for (const work of ARCHIVE_WORKS.filter(w => w.top_pill !== false)) {
-      const isActive = normalizeKey(work.slug) === normalizeKey(CURRENT_WORK?.slug);
+    for (const work of works) {
       const entries = Array.isArray(work.entries) ? work.entries : [];
+      const isActive = normalizeKey(work.slug) === normalizeKey(CURRENT_WORK?.slug);
 
       html += `
         <div class="topworks-item${isActive ? " active" : ""}">
@@ -618,11 +618,22 @@
       `;
 
       for (const entry of entries) {
+        const active =
+          isActive && normalizeKey(entry.slug) === normalizeKey(CURRENT_ENTRY?.slug)
+            ? " active"
+            : "";
+
         const label = `${work.display || titleCaseSlug(work.slug)} · ${entry.subtitle || titleCaseSlug(entry.slug)}`;
-        const active = isActive && normalizeKey(entry.slug) === normalizeKey(CURRENT_ENTRY?.slug) ? " active" : "";
 
         html += `
-          <a href="?dir=${encodeURIComponent(work.slug)}&file=${encodeURIComponent(entry.slug)}" class="topworks-link${active}" data-dir="${escapeHtml(work.slug)}" data-file="${escapeHtml(entry.slug)}">${escapeHtml(label)}</a>
+          <a
+            href="?dir=${encodeURIComponent(work.slug)}&file=${encodeURIComponent(entry.slug)}"
+            class="topworks-link${active}"
+            data-dir="${escapeHtml(work.slug)}"
+            data-file="${escapeHtml(entry.slug)}"
+          >
+            ${escapeHtml(label)}
+          </a>
         `;
       }
 
@@ -644,8 +655,8 @@
   }
 
   function wireTopFlyouts() {
-    if (topFlyoutsWired) return;
-    topFlyoutsWired = true;
+    if (desktopFlyoutsWired || IS_MOBILE_READER) return;
+    desktopFlyoutsWired = true;
 
     document.addEventListener("click", (e) => {
       const trigger = e.target.closest(".topworks-trigger");
@@ -666,6 +677,16 @@
     });
   }
 
+  function setMobileOpenWork(workSlug) {
+    mobileOpenWorkSlug = normalizeKey(workSlug || "");
+
+    $$(".mobile-work-item").forEach(item => {
+      const open = normalizeKey(item.dataset.workSlug) === mobileOpenWorkSlug;
+      item.classList.toggle("open", open);
+      item.classList.toggle("active", open || normalizeKey(item.dataset.workSlug) === normalizeKey(CURRENT_WORK?.slug));
+    });
+  }
+
   function wireMobileWorksNav() {
     if (!IS_MOBILE_READER || mobileWorksWired) return;
     mobileWorksWired = true;
@@ -678,9 +699,8 @@
       if (toggle) {
         const slug = toggle.dataset.workToggle;
         const normalized = normalizeKey(slug);
-        const isAlreadyOpen = normalized === normalizeKey(mobileOpenWorkSlug);
-
-        setMobileOpenWork(isAlreadyOpen ? "" : slug);
+        const alreadyOpen = normalized === normalizeKey(mobileOpenWorkSlug);
+        setMobileOpenWork(alreadyOpen ? "" : slug);
         syncDialThumb();
         return;
       }
@@ -688,13 +708,78 @@
       const chapterBtn = e.target.closest("button[data-dir][data-file]");
       if (!chapterBtn) return;
 
-      const dir = chapterBtn.dataset.dir;
-      const file = chapterBtn.dataset.file;
-
-      setMobileOpenWork(dir);
-      await switchEntry(dir, file, false);
+      setMobileOpenWork(chapterBtn.dataset.dir);
+      await switchEntry(chapterBtn.dataset.dir, chapterBtn.dataset.file, false);
       scrollToReaderTop();
     });
+  }
+
+  function syncDialThumb() {
+    if (!IS_MOBILE_READER) return;
+
+    const scrollEl = document.getElementById("worksNav");
+    const track = document.getElementById("dialTrack");
+    const thumb = document.getElementById("dialThumb");
+    if (!scrollEl || !track || !thumb) return;
+
+    const maxScroll = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight);
+    const trackHeight = track.clientHeight;
+    const thumbHeight = thumb.offsetHeight;
+    const maxTop = Math.max(0, trackHeight - thumbHeight);
+
+    const ratio = maxScroll > 0 ? scrollEl.scrollTop / maxScroll : 0;
+    thumb.style.top = `${maxTop * ratio}px`;
+  }
+
+  function wireMobileDial() {
+    if (!IS_MOBILE_READER || dialWired) return;
+    dialWired = true;
+
+    const scrollEl = document.getElementById("worksNav");
+    const track = document.getElementById("dialTrack");
+    const thumb = document.getElementById("dialThumb");
+    if (!scrollEl || !track || !thumb) return;
+
+    let dragging = false;
+
+    function moveThumb(clientY) {
+      const rect = track.getBoundingClientRect();
+      const thumbHeight = thumb.offsetHeight;
+      const maxTop = Math.max(0, rect.height - thumbHeight);
+
+      let top = clientY - rect.top - thumbHeight / 2;
+      top = Math.max(0, Math.min(maxTop, top));
+
+      const ratio = maxTop > 0 ? top / maxTop : 0;
+      const maxScroll = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight);
+
+      scrollEl.scrollTop = maxScroll * ratio;
+      thumb.style.top = `${top}px`;
+    }
+
+    track.addEventListener("pointerdown", (e) => {
+      dragging = true;
+      track.setPointerCapture?.(e.pointerId);
+      moveThumb(e.clientY);
+    });
+
+    track.addEventListener("pointermove", (e) => {
+      if (!dragging) return;
+      moveThumb(e.clientY);
+    });
+
+    track.addEventListener("pointerup", (e) => {
+      dragging = false;
+      track.releasePointerCapture?.(e.pointerId);
+    });
+
+    track.addEventListener("pointercancel", () => {
+      dragging = false;
+    });
+
+    scrollEl.addEventListener("scroll", syncDialThumb, { passive: true });
+    window.addEventListener("resize", syncDialThumb);
+    syncDialThumb();
   }
 
   function getEntryContext() {
@@ -715,11 +800,9 @@
     btn.className = `traversal-pill${extraClass ? ` ${extraClass}` : ""}`;
     btn.textContent = label;
     btn.disabled = !!disabled;
-
     if (!disabled && typeof onClick === "function") {
       btn.addEventListener("click", onClick);
     }
-
     return btn;
   }
 
@@ -749,25 +832,13 @@
 
     if (IS_MOBILE_READER) {
       bar.appendChild(
-        makeTraversalPill(
-          "← Previous",
-          prev ? () => switchEntry(CURRENT_WORK.slug, prev.slug, false) : null,
-          "",
-          !prev
-        )
+        makeTraversalPill("← Previous", prev ? () => switchEntry(CURRENT_WORK.slug, prev.slug, false) : null, "", !prev)
       );
-
       bar.appendChild(
         makeTraversalPill("Search", () => scrollToSearchBar())
       );
-
       bar.appendChild(
-        makeTraversalPill(
-          "Next →",
-          next ? () => switchEntry(CURRENT_WORK.slug, next.slug, false) : null,
-          "",
-          !next
-        )
+        makeTraversalPill("Next →", next ? () => switchEntry(CURRENT_WORK.slug, next.slug, false) : null, "", !next)
       );
 
       shell.appendChild(bar);
@@ -780,9 +851,12 @@
 
     for (const entry of entries) {
       const isCurrent = normalizeKey(entry.slug) === normalizeKey(CURRENT_ENTRY?.slug);
-      const label = entry.subtitle || titleCaseSlug(entry.slug);
       bar.appendChild(
-        makeTraversalPill(label, () => switchEntry(CURRENT_WORK.slug, entry.slug, false), isCurrent ? "current" : "")
+        makeTraversalPill(
+          entry.subtitle || titleCaseSlug(entry.slug),
+          () => switchEntry(CURRENT_WORK.slug, entry.slug, false),
+          isCurrent ? "current" : ""
+        )
       );
     }
 
@@ -792,6 +866,27 @@
 
     shell.appendChild(bar);
     return shell;
+  }
+
+  function scrollToReaderTop() {
+    const target =
+      document.getElementById("readerTopAnchor") ||
+      document.getElementById("reader") ||
+      document.getElementById("searchBarAnchor");
+
+    if (target) {
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }
+
+  function scrollToSearchBar() {
+    const target =
+      document.getElementById("searchBarAnchor") ||
+      document.querySelector(".hero");
+
+    if (target) {
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
   }
 
   function updateChapterProgress(progress = 0) {
@@ -806,7 +901,7 @@
     if (pageBar) pageBar.style.width = `${percent}%`;
     if (fill) fill.style.width = `${percent}%`;
     if (text) text.textContent = `${percent}%`;
-    if (label) label.textContent = CURRENT_ENTRY?.subtitle || CURRENT_ITEM?.subtitle || "Chapter Progress";
+    if (label) label.textContent = CURRENT_ENTRY?.subtitle || CURRENT_MANIFEST?.subtitle || "Chapter Progress";
 
     const bottomBtn = document.getElementById("scrollToBottomTraversalBtn");
     if (bottomBtn && clamped >= BOTTOM_GLOW_PROGRESS && !bottomGlowTriggered) {
@@ -851,12 +946,11 @@
   function startRefreshTimers() {
     clearRefreshTimers();
 
-    if (IS_MOBILE_READER) return;
+    if (IS_MOBILE_READER || !CURRENT_MANIFEST) return;
 
     railRefreshTimer = window.setInterval(() => {
-      if (document.hidden || !CURRENT_ITEM) return;
-
-      const subids = getSubids(CURRENT_ITEM);
+      if (document.hidden || !CURRENT_MANIFEST) return;
+      const subids = getSubids(CURRENT_MANIFEST);
 
       LEFT_RAIL_IDS.forEach((id, index) => {
         refillSlot(document.getElementById(id), ZONES.leftRail, subids.left, subids.work, index + 1);
@@ -870,32 +964,34 @@
     }, RAIL_REFRESH_MS);
 
     bannerRefreshTimer = window.setInterval(() => {
-      if (document.hidden || !CURRENT_ITEM) return;
-
-      const subids = getSubids(CURRENT_ITEM);
+      if (document.hidden || !CURRENT_MANIFEST) return;
+      const subids = getSubids(CURRENT_MANIFEST);
       refillSlot(document.getElementById("topBannerSlot"), ZONES.topBanner, subids.top, subids.work, 1);
       serveAds();
     }, BANNER_REFRESH_MS);
   }
 
-  function maybePreloadNextChapter() {
-    if (nextPrefetch || !CURRENT_WORK || !CURRENT_ENTRY) return;
+  async function maybePreloadNextChapter() {
+    if (nextPrefetchPromise || !CURRENT_WORK || !CURRENT_ENTRY) return;
 
     const { next } = getEntryContext();
     if (!next) return;
 
-    const entryPath = next.path || next.slug;
-    const itemUrl = buildItemJsonPath(CURRENT_WORK.slug, entryPath);
+    const nextEntryPath = next.path || next.slug;
+    const itemUrl = buildItemJsonPath(CURRENT_WORK.slug, nextEntryPath);
 
-    nextPrefetch = fetchJson(itemUrl)
-      .then(manifest => {
-        const images = buildImageList(manifest).slice(0, 3);
-        const base = normalizeBaseUrl(manifest.base_url);
+    nextPrefetchPromise = fetchJson(itemUrl)
+      .then(async (manifest) => {
+        const base = normalizeBaseUrl(
+          manifest?.base_url ||
+          buildEntryBaseUrl(CURRENT_WORK.slug, nextEntryPath)
+        );
 
-        images.forEach(name => {
+        const images = await resolveManifestImages(base, manifest);
+        images.slice(0, 3).forEach(name => {
           const img = new Image();
           img.decoding = "async";
-          img.src = `${base}/${name}`;
+          img.src = joinUrl(base, name);
         });
 
         return manifest;
@@ -928,7 +1024,7 @@
 
     const leftTag = document.createElement("div");
     leftTag.className = "chapter-tag";
-    leftTag.textContent = `${manifest.title || CURRENT_WORK.display || titleCaseSlug(CURRENT_WORK.slug)} · ${manifest.subtitle || CURRENT_ENTRY.subtitle || titleCaseSlug(CURRENT_ENTRY.slug)}`;
+    leftTag.textContent = `${CURRENT_WORK.display || titleCaseSlug(CURRENT_WORK.slug)} · ${manifest.subtitle || CURRENT_ENTRY.subtitle || titleCaseSlug(CURRENT_ENTRY.slug)}`;
 
     const rightTag = document.createElement("div");
     rightTag.className = "chapter-tag";
@@ -949,21 +1045,11 @@
     return meta;
   }
 
-  function clearDesktopAdShells() {
-    const topBanner = document.getElementById("topBannerSlot");
-    if (topBanner) topBanner.innerHTML = "";
-
-    [...LEFT_RAIL_IDS, ...RIGHT_RAIL_IDS].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.innerHTML = "";
-    });
-  }
-
   async function buildReader() {
     const reader = document.getElementById("reader");
     if (!reader) return;
 
-    nextPrefetch = null;
+    nextPrefetchPromise = null;
     bottomGlowTriggered = false;
     updateChapterProgress(0);
 
@@ -973,7 +1059,9 @@
     if (!resolved) {
       const first = getFirstEntry();
       resolved = first.work && first.entry ? first : null;
-      if (resolved) setQueryState(resolved.work.slug, resolved.entry.slug, true);
+      if (resolved) {
+        setQueryState(resolved.work.slug, resolved.entry.slug, true);
+      }
     }
 
     if (!resolved) {
@@ -990,7 +1078,14 @@
     const entryPath = resolved.entry.path || resolved.entry.slug;
     const itemUrl = buildItemJsonPath(resolved.work.slug, entryPath);
     const manifest = await fetchJson(itemUrl);
-    CURRENT_ITEM = manifest;
+    CURRENT_MANIFEST = manifest;
+
+    const entryBaseUrl = buildEntryBaseUrl(resolved.work.slug, entryPath);
+    const base = normalizeBaseUrl(manifest?.base_url || entryBaseUrl);
+    const images = await resolveManifestImages(base, manifest);
+
+    if (!base) throw new Error(`Manifest for ${resolved.entry.slug} is missing base_url`);
+    if (!images.length) throw new Error(`Manifest for ${resolved.entry.slug} has no images`);
 
     const title = `${resolved.work.display || titleCaseSlug(resolved.work.slug)} · ${manifest.subtitle || resolved.entry.subtitle || titleCaseSlug(resolved.entry.slug)}`;
     const workTitleEl = document.getElementById("workTitle");
@@ -1015,12 +1110,6 @@
     topAnchor.className = "reader-anchor";
     reader.appendChild(topAnchor);
 
-    const images = buildImageList(manifest);
-    const base = normalizeBaseUrl(manifest.base_url);
-
-    if (!base) throw new Error(`Manifest for ${resolved.entry.slug} is missing base_url`);
-    if (!images.length) throw new Error(`Manifest for ${resolved.entry.slug} has no images`);
-
     reader.appendChild(buildChapterMeta(manifest, images.length));
 
     const note = document.createElement("div");
@@ -1032,16 +1121,16 @@
 
     reader.appendChild(buildTraversal("top"));
 
-    const betweenEvery = IS_MOBILE_READER ? 2 : (Number(manifest.ads?.between_every) || 0);
-    const betweenSlots = IS_MOBILE_READER ? 1 : (Number(manifest.ads?.between_slots) || 3);
-    const finalBlock = IS_MOBILE_READER ? 0 : Math.max(Number(manifest.ads?.final_block) || 0, BOTTOM_AD_COUNT);
+    const betweenEvery = IS_MOBILE_READER ? 2 : (Number(manifest?.ads?.between_every) || 0);
+    const betweenSlots = IS_MOBILE_READER ? 1 : (Number(manifest?.ads?.between_slots) || 3);
+    const finalBlock = IS_MOBILE_READER ? 0 : Math.max(Number(manifest?.ads?.final_block) || 0, 6);
 
     let groupNumber = 0;
 
     for (let i = 0; i < images.length; i++) {
       reader.appendChild(
         imageBlock(
-          `${base}/${images[i]}`,
+          joinUrl(base, images[i]),
           `${manifest.title || resolved.work.display || resolved.work.slug} page ${i + 1}`
         )
       );
