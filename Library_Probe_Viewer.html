@@ -1,0 +1,484 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Library JSON Probe Viewer</title>
+  <style>
+    :root {
+      --bg: #0b0d10;
+      --panel: #13171c;
+      --panel-2: #1a2027;
+      --text: #e8edf2;
+      --muted: #9fb0c0;
+      --ok: #7ee787;
+      --bad: #ff7b72;
+      --warn: #f2cc60;
+      --line: #2a3340;
+      --link: #7cc7ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      background: linear-gradient(180deg, #0b0d10 0%, #10151b 100%);
+      color: var(--text);
+    }
+    .wrap {
+      max-width: 1300px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+    h1, h2, h3 { margin: 0 0 10px; }
+    p { color: var(--muted); line-height: 1.45; }
+    .panel {
+      background: rgba(19,23,28,.92);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 18px;
+      margin-bottom: 18px;
+      box-shadow: 0 12px 30px rgba(0,0,0,.25);
+    }
+    .grid {
+      display: grid;
+      gap: 14px;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    }
+    label {
+      display: block;
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+    input[type="text"], input[type="file"] {
+      width: 100%;
+      background: var(--panel-2);
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px 14px;
+      font-size: 14px;
+    }
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+    }
+    button {
+      appearance: none;
+      border: 1px solid var(--line);
+      background: #1d2630;
+      color: var(--text);
+      border-radius: 12px;
+      padding: 12px 16px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    button:hover { filter: brightness(1.08); }
+    .muted { color: var(--muted); }
+    .tiny { font-size: 12px; }
+    .stats {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      margin-top: 12px;
+    }
+    .stat {
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px;
+    }
+    .stat .num {
+      font-size: 26px;
+      font-weight: 700;
+      margin-top: 6px;
+    }
+    .ok { color: var(--ok); }
+    .bad { color: var(--bad); }
+    .warn { color: var(--warn); }
+    .results {
+      display: grid;
+      gap: 14px;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      min-height: 100%;
+    }
+    .thumb {
+      width: 100%;
+      aspect-ratio: 3 / 4;
+      object-fit: contain;
+      background: #0d1117;
+      border-bottom: 1px solid var(--line);
+    }
+    .thumb.placeholder {
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      font-size: 12px;
+      padding: 12px;
+    }
+    .card-body {
+      padding: 12px;
+      display: grid;
+      gap: 8px;
+    }
+    .title {
+      font-weight: 700;
+      line-height: 1.3;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      font-size: 12px;
+      width: fit-content;
+      background: #151b22;
+    }
+    .urls {
+      word-break: break-all;
+      font-size: 12px;
+      color: var(--muted);
+      display: grid;
+      gap: 4px;
+    }
+    .broken-list {
+      display: grid;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .broken-item {
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid #4f2525;
+      background: rgba(86, 28, 28, 0.28);
+    }
+    .hidden { display: none; }
+    a { color: var(--link); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .progress {
+      height: 10px;
+      background: #0d1117;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      overflow: hidden;
+      margin-top: 10px;
+    }
+    .bar {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #7cc7ff, #7ee787);
+      transition: width .12s ease;
+    }
+    .sticky {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      backdrop-filter: blur(8px);
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="panel sticky">
+      <h1>Library Probe Viewer</h1>
+      <p>Upload your <code>library.json</code>, paste your base works URL, and this page will test every entry from the JSON. It will show broken chapters at the top and image previews for the ones that resolve.</p>
+      <div class="grid">
+        <div>
+          <label for="baseInput">Base input</label>
+          <input id="baseInput" type="text" value="https://pub-cd01009a7c6c464aa0b093e33aa5ae51.r2.dev/works --show-ok" />
+        </div>
+        <div>
+          <label for="fileInput">library.json</label>
+          <input id="fileInput" type="file" accept=".json,application/json" />
+        </div>
+      </div>
+      <div class="row" style="margin-top:12px;">
+        <button id="runBtn">Run probe</button>
+        <button id="downloadBtn" disabled>Download report JSON</button>
+        <span id="status" class="muted tiny">Waiting for orders.</span>
+      </div>
+      <div class="progress"><div id="bar" class="bar"></div></div>
+      <div class="stats" id="stats"></div>
+      <div id="brokenWrap" class="hidden">
+        <h3 style="margin-top:16px;">Broken chapters</h3>
+        <div id="brokenList" class="broken-list"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="row" style="justify-content:space-between; align-items:flex-end;">
+        <div>
+          <h2>Results</h2>
+          <p class="tiny">Cards below use the first image URL when it works. If an entry only has <code>item.json</code> but not <code>001.webp</code>, it will still be marked accordingly.</p>
+        </div>
+      </div>
+      <div id="results" class="results"></div>
+    </div>
+  </div>
+
+  <script>
+    const fileInput = document.getElementById('fileInput');
+    const baseInput = document.getElementById('baseInput');
+    const runBtn = document.getElementById('runBtn');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const statusEl = document.getElementById('status');
+    const statsEl = document.getElementById('stats');
+    const brokenWrap = document.getElementById('brokenWrap');
+    const brokenList = document.getElementById('brokenList');
+    const resultsEl = document.getElementById('results');
+    const bar = document.getElementById('bar');
+
+    let latestReport = null;
+
+    function parseBaseInput(raw) {
+      const text = String(raw || '').trim();
+      const parts = text.split(/\s+/).filter(Boolean);
+      const showOk = parts.includes('--show-ok');
+      const baseUrl = (parts.find(p => !p.startsWith('--')) || '').replace(/\/+$/, '');
+      return { baseUrl, showOk };
+    }
+
+    function joinUrl(...parts) {
+      return parts
+        .map((part, i) => {
+          const s = String(part || '');
+          if (i === 0) return s.replace(/\/+$/, '');
+          return s.replace(/^\/+|\/+$/g, '');
+        })
+        .filter(Boolean)
+        .join('/');
+    }
+
+    async function requestWithFallback(url) {
+      try {
+        let res = await fetch(url, { method: 'HEAD', cache: 'no-store' });
+        if (res.status === 405 || res.status === 403) {
+          res = await fetch(url, { method: 'GET', cache: 'no-store' });
+        }
+        return { ok: res.ok, status: res.status, url };
+      } catch (error) {
+        return { ok: false, status: 'ERROR', url, error: error.message };
+      }
+    }
+
+    async function readJsonFile(file) {
+      const text = await file.text();
+      return JSON.parse(text);
+    }
+
+    function flattenEntries(library) {
+      const works = Array.isArray(library?.works) ? library.works : [];
+      const rows = [];
+      for (const work of works) {
+        const entries = Array.isArray(work?.entries) ? work.entries : [];
+        for (const entry of entries) {
+          rows.push({ work, entry });
+        }
+      }
+      return rows;
+    }
+
+    function setProgress(current, total) {
+      const pct = total > 0 ? (current / total) * 100 : 0;
+      bar.style.width = pct.toFixed(2) + '%';
+    }
+
+    function setStatus(text) {
+      statusEl.textContent = text;
+    }
+
+    function renderStats(report) {
+      const okCount = report.results.filter(r => r.anyOk).length;
+      const brokenCount = report.results.filter(r => !r.anyOk).length;
+      const imageOkCount = report.results.filter(r => r.image.ok).length;
+      const itemOkCount = report.results.filter(r => r.item.ok).length;
+
+      statsEl.innerHTML = `
+        <div class="stat"><div class="muted tiny">Total entries</div><div class="num">${report.results.length}</div></div>
+        <div class="stat"><div class="muted tiny">Any success</div><div class="num ok">${okCount}</div></div>
+        <div class="stat"><div class="muted tiny">Fully broken</div><div class="num bad">${brokenCount}</div></div>
+        <div class="stat"><div class="muted tiny">item.json works</div><div class="num warn">${itemOkCount}</div></div>
+        <div class="stat"><div class="muted tiny">001.webp works</div><div class="num ok">${imageOkCount}</div></div>
+      `;
+    }
+
+    function renderBroken(report) {
+      const broken = report.results.filter(r => !r.anyOk);
+      if (!broken.length) {
+        brokenWrap.classList.add('hidden');
+        brokenList.innerHTML = '';
+        return;
+      }
+
+      brokenWrap.classList.remove('hidden');
+      brokenList.innerHTML = broken.map(r => `
+        <div class="broken-item">
+          <div><strong>${escapeHtml(r.work_display)}</strong> · ${escapeHtml(r.entry_subtitle || r.entry_slug)}</div>
+          <div class="tiny muted">slug: ${escapeHtml(r.entry_slug)} | path: ${escapeHtml(r.entry_path)}</div>
+          <div class="tiny bad">item.json: ${escapeHtml(String(r.item.status))} | 001.webp: ${escapeHtml(String(r.image.status))}</div>
+        </div>
+      `).join('');
+    }
+
+    function renderResults(report, showOk) {
+      const rows = showOk ? report.results : report.results.filter(r => !r.anyOk || r.image.ok);
+
+      resultsEl.innerHTML = rows.map(r => {
+        const badge = r.anyOk ? '<span class="pill ok">Working-ish</span>' : '<span class="pill bad">Broken</span>';
+        const thumb = r.image.ok
+          ? `<img class="thumb" loading="lazy" src="${encodeURI(r.image.url)}" alt="${escapeHtml(r.entry_subtitle || r.entry_slug)}" />`
+          : `<div class="thumb placeholder">No image preview<br>${escapeHtml(String(r.image.status))}</div>`;
+
+        return `
+          <article class="card">
+            ${thumb}
+            <div class="card-body">
+              <div class="title">${escapeHtml(r.work_display)} · ${escapeHtml(r.entry_subtitle || r.entry_slug)}</div>
+              ${badge}
+              <div class="tiny muted">slug: ${escapeHtml(r.entry_slug)}</div>
+              <div class="tiny muted">path: ${escapeHtml(r.entry_path)}</div>
+              <div class="urls">
+                <div>item.json: ${r.item.ok ? '<span class="ok">OK</span>' : '<span class="bad">' + escapeHtml(String(r.item.status)) + '</span>'}</div>
+                <div>001.webp: ${r.image.ok ? '<span class="ok">OK</span>' : '<span class="bad">' + escapeHtml(String(r.image.status)) + '</span>'}</div>
+                <div><a href="${encodeURI(r.item.url)}" target="_blank" rel="noopener">Open item.json</a></div>
+                <div><a href="${encodeURI(r.image.url)}" target="_blank" rel="noopener">Open 001.webp</a></div>
+              </div>
+            </div>
+          </article>
+        `;
+      }).join('');
+    }
+
+    function escapeHtml(text) {
+      return String(text ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    function downloadReport(report) {
+      const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'library_probe_report.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    async function runProbe() {
+      const file = fileInput.files?.[0];
+      const { baseUrl, showOk } = parseBaseInput(baseInput.value);
+
+      if (!file) {
+        alert('Pick a library.json file first.');
+        return;
+      }
+      if (!baseUrl) {
+        alert('Paste a base works URL first.');
+        return;
+      }
+
+      runBtn.disabled = true;
+      downloadBtn.disabled = true;
+      resultsEl.innerHTML = '';
+      brokenList.innerHTML = '';
+      brokenWrap.classList.add('hidden');
+      statsEl.innerHTML = '';
+      setProgress(0, 1);
+      setStatus('Reading library.json...');
+
+      try {
+        const library = await readJsonFile(file);
+        const rows = flattenEntries(library);
+
+        if (!rows.length) {
+          throw new Error('No works/entries found in library.json');
+        }
+
+        const results = [];
+        let current = 0;
+        const concurrency = 8;
+
+        async function worker(queue) {
+          while (queue.length) {
+            const row = queue.shift();
+            const { work, entry } = row;
+            const baseEntryUrl = joinUrl(baseUrl, work.slug, entry.path);
+            const itemUrl = joinUrl(baseEntryUrl, 'item.json');
+            const imageUrl = joinUrl(baseEntryUrl, '001.webp');
+
+            const [item, image] = await Promise.all([
+              requestWithFallback(itemUrl),
+              requestWithFallback(imageUrl)
+            ]);
+
+            results.push({
+              work_id: work.id,
+              work_slug: work.slug,
+              work_display: work.display,
+              entry_slug: entry.slug,
+              entry_subtitle: entry.subtitle || '',
+              entry_path: entry.path,
+              item,
+              image,
+              anyOk: !!(item.ok || image.ok)
+            });
+
+            current += 1;
+            setProgress(current, rows.length);
+            setStatus(`Testing ${current} of ${rows.length}...`);
+          }
+        }
+
+        const queue = [...rows];
+        await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, () => worker(queue)));
+
+        results.sort((a, b) => {
+          if (a.work_slug !== b.work_slug) return a.work_slug.localeCompare(b.work_slug);
+          return a.entry_slug.localeCompare(b.entry_slug, undefined, { numeric: true, sensitivity: 'base' });
+        });
+
+        latestReport = {
+          generated_at: new Date().toISOString(),
+          base_url: baseUrl,
+          show_ok: showOk,
+          total_entries: results.length,
+          results
+        };
+
+        renderStats(latestReport);
+        renderBroken(latestReport);
+        renderResults(latestReport, showOk);
+        setStatus(`Done. Tested ${results.length} entries.`);
+        downloadBtn.disabled = false;
+      } catch (error) {
+        console.error(error);
+        setStatus(`Probe failed: ${error.message}`);
+        alert(`Probe failed: ${error.message}`);
+      } finally {
+        runBtn.disabled = false;
+      }
+    }
+
+    runBtn.addEventListener('click', runProbe);
+    downloadBtn.addEventListener('click', () => {
+      if (latestReport) downloadReport(latestReport);
+    });
+  </script>
+</body>
+</html>
